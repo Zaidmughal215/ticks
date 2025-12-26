@@ -1,0 +1,608 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mystic Hand Magic - Doctor Strange Style</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+
+    <!-- MediaPipe Hands & Camera Utils -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700&family=Roboto:wght@300;400&display=swap');
+
+        body {
+            font-family: 'Roboto', sans-serif;
+            background-color: #050505;
+            background-image: 
+                radial-gradient(circle at 50% 50%, #1a1005 0%, #000000 100%);
+            overflow: hidden;
+            color: #fbbf24; /* Amber-400 */
+        }
+
+        h1, h2, h3 {
+            font-family: 'Cinzel', serif;
+        }
+
+        /* Container for the video and canvas to ensure perfect overlay */
+        .viewport-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        /* Mirror the video and canvas for natural interaction */
+        .mirror {
+            transform: scaleX(-1);
+        }
+
+        video {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            opacity: 0.4; /* Dim the video to make magic pop */
+            z-index: 0;
+        }
+
+        canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            z-index: 1;
+        }
+
+        /* UI Overlay on top */
+        .ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 10;
+            pointer-events: none; /* Let clicks pass through */
+        }
+
+        .interactive-element {
+            pointer-events: auto;
+        }
+
+        .instruction-box {
+            background: rgba(0, 0, 0, 0.7);
+            border: 1px solid #d97706; /* Amber-600 */
+            box-shadow: 0 0 15px rgba(217, 119, 6, 0.3);
+            backdrop-filter: blur(5px);
+        }
+
+        /* Loading Spinner */
+        .loader {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #d97706;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .magic-text-shadow {
+            text-shadow: 0 0 10px #d97706, 0 0 20px #92400e;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Main Application Container -->
+    <main class="viewport-container">
+        <!-- Input Video (Hidden or Dimmed Background) -->
+        <video id="input_video" class="mirror" playsinline muted></video>
+        
+        <!-- Output Canvas for Magic -->
+        <canvas id="output_canvas" class="mirror"></canvas>
+
+        <!-- UI Layer -->
+        <div class="ui-layer flex flex-col justify-between p-6">
+            
+            <!-- Header -->
+            <header class="flex justify-between items-start">
+                <div>
+                    <h1 class="text-4xl font-bold text-amber-500 magic-text-shadow tracking-wider">MYSTIC ARTS</h1>
+                    <p class="text-amber-200/70 text-sm mt-1">Hand Tracking Magic Demo</p>
+                </div>
+                <div id="status-indicator" class="flex items-center gap-2 bg-black/50 px-3 py-1 rounded-full border border-amber-900/50">
+                    <div class="w-2 h-2 rounded-full bg-red-500 transition-colors duration-300" id="status-dot"></div>
+                    <span class="text-xs uppercase tracking-widest text-amber-500/80" id="status-text">Initializing...</span>
+                </div>
+            </header>
+
+            <!-- Loading Overlay (Centered) -->
+            <div id="loading-overlay" class="absolute inset-0 flex flex-col items-center justify-center bg-black/80 z-20 interactive-element">
+                <div class="loader mb-4"></div>
+                <h2 class="text-2xl text-amber-500 magic-text-shadow">Summoning Spirits...</h2>
+                <p class="text-amber-200/60 mt-2">Loading hand tracking models</p>
+            </div>
+
+            <!-- Error Overlay (Hidden by default) -->
+            <div id="error-overlay" class="hidden absolute inset-0 flex flex-col items-center justify-center bg-black/95 z-30 interactive-element p-8 text-center">
+                <div class="text-red-500 text-6xl mb-4">⚠️</div>
+                <h2 class="text-2xl text-red-500 font-bold mb-2">Connection Severed</h2>
+                <p class="text-gray-400 max-w-md" id="error-message">Please allow camera access to use this demo.</p>
+                <button onclick="location.reload()" class="mt-6 px-6 py-2 bg-amber-700 hover:bg-amber-600 text-white rounded border border-amber-500 transition-colors cursor-pointer">
+                    Try Again
+                </button>
+            </div>
+
+            <!-- Instructions Panel -->
+            <div class="self-end instruction-box p-4 rounded-lg max-w-sm transition-opacity duration-500 opacity-0" id="instructions">
+                <h3 class="text-amber-400 font-bold border-b border-amber-800 pb-2 mb-2">Spellbook</h3>
+                <ul class="space-y-2 text-sm text-amber-100/90">
+                    <li class="flex items-center gap-2">
+                        <span class="text-xl">✋</span> 
+                        <span><strong>Open Hand:</strong> Summon Shield</span>
+                    </li>
+                    <li class="flex items-center gap-2">
+                        <span class="text-xl">✊</span> 
+                        <span><strong>Fist:</strong> Dismiss Shield</span>
+                    </li>
+                    <li class="flex items-center gap-2">
+                        <span class="text-xl">🫰</span> 
+                        <span><strong>Finger Heart:</strong> Morph to Heart</span>
+                    </li>
+                    <li class="flex items-center gap-2">
+                        <span class="text-xl">👌</span> 
+                        <span><strong>Pinch Distance:</strong> Zoom Size</span>
+                    </li>
+                    <li class="flex items-center gap-2">
+                        <span class="text-xl">👋</span> 
+                        <span><strong>Swipe:</strong> Cast Energy Trail</span>
+                    </li>
+                </ul>
+                <div class="mt-3 text-xs text-amber-500/60 italic border-t border-amber-900/50 pt-2">
+                    Ensure good lighting and face the camera.
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        /**
+         * MYSTIC HAND MAGIC
+         * A Doctor Strange inspired creative coding demo using MediaPipe Hands.
+         */
+
+        // --- Configuration ---
+        const CONFIG = {
+            camera: { width: 1280, height: 720 },
+            magic: {
+                baseColor: '251, 191, 36', // Amber-400 RGB
+                secondaryColor: '245, 158, 11', // Amber-500 RGB
+                particleCount: 40,
+                trailLength: 20,
+                circleBaseRadius: 150, // Increased size for Dr Strange sign
+                rotationSpeed: 0.02,
+                pinchScaleSpeed: 0.05
+            },
+            thresholds: {
+                pinchDistance: 0.05, // Distance between thumb and index tip
+                fistFingerDistance: 0.08 // Distance of fingertips to palm for fist detection
+            }
+        };
+
+        // --- Global State ---
+        const state = {
+            isLoading: true,
+            handDetected: false,
+            gesture: 'NONE', // NONE, OPEN, FIST, PINCH, HEART
+            palmPosition: { x: 0, y: 0 },
+            rotationAngle: 0,
+            scale: 1,
+            heartMorph: 0, // 0 = Circle, 1 = Heart
+            particles: [],
+            trail: [] // Stores previous palm positions
+        };
+
+        // --- DOM Elements ---
+        const videoElement = document.getElementById('input_video');
+        const canvasElement = document.getElementById('output_canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+        const loadingOverlay = document.getElementById('loading-overlay');
+        const errorOverlay = document.getElementById('error-overlay');
+        const errorMessage = document.getElementById('error-message');
+        const instructionsPanel = document.getElementById('instructions');
+        const statusDot = document.getElementById('status-dot');
+        const statusText = document.getElementById('status-text');
+
+        // --- Initialization ---
+
+        function onResults(results) {
+            // Hide loading screen once we get first results
+            if (state.isLoading) {
+                state.isLoading = false;
+                loadingOverlay.classList.add('hidden');
+                instructionsPanel.classList.remove('opacity-0');
+                statusDot.classList.replace('bg-red-500', 'bg-green-500');
+                statusText.innerText = "Active";
+            }
+
+            // Prepare Canvas
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            
+            // Note: We are NOT drawing the video image onto the canvas here, 
+            // because we put the <video> element behind the canvas with CSS.
+            // This allows us to use CSS filters on the video easily if we want.
+            // However, MediaPipe gives us the image if we wanted to process it.
+
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                state.handDetected = true;
+                const landmarks = results.multiHandLandmarks[0]; // Just track the first hand found
+                processHand(landmarks, canvasElement.width, canvasElement.height);
+            } else {
+                state.handDetected = false;
+                state.gesture = 'NONE';
+            }
+
+            // Always run the particle/trail engine even if hand is lost momentarily (for fading effects)
+            updateAndDrawParticles(canvasCtx);
+            
+            canvasCtx.restore();
+        }
+
+        const hands = new Hands({locateFile: (file) => {
+            return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+        }});
+
+        hands.setOptions({
+            maxNumHands: 1,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+
+        hands.onResults(onResults);
+
+        // Camera Setup
+        const camera = new Camera(videoElement, {
+            onFrame: async () => {
+                await hands.send({image: videoElement});
+            },
+            width: CONFIG.camera.width,
+            height: CONFIG.camera.height
+        });
+
+        // Start Camera
+        camera.start()
+            .then(() => {
+                console.log("Camera started");
+            })
+            .catch(err => {
+                console.error("Camera error:", err);
+                loadingOverlay.classList.add('hidden');
+                errorOverlay.classList.remove('hidden');
+                errorMessage.innerText = `Could not access camera: ${err.message}. Please allow permission.`;
+            });
+
+        // Resize canvas to match window
+        function resizeCanvas() {
+            canvasElement.width = window.innerWidth;
+            canvasElement.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // --- Logic & Detection ---
+
+        function processHand(landmarks, width, height) {
+            // 1. Calculate Palm Center
+            const p0 = landmarks[0];
+            const p5 = landmarks[5];
+            const p9 = landmarks[9]; // Middle MCP
+            const p17 = landmarks[17];
+            
+            const palmX = (p0.x + p5.x + p17.x) / 3 * width;
+            const palmY = (p0.y + p5.y + p17.y) / 3 * height;
+
+            // Interpolate position
+            state.palmPosition.x += (palmX - state.palmPosition.x) * 0.2;
+            state.palmPosition.y += (palmY - state.palmPosition.y) * 0.2;
+
+            // 2. Detect Gesture
+            const thumbTip = landmarks[4];
+            const indexTip = landmarks[8];
+            const middleTip = landmarks[12];
+            const ringTip = landmarks[16];
+            const pinkyTip = landmarks[20];
+            const wrist = landmarks[0];
+
+            const dist = (p1, p2) => Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2));
+            const handSize = dist(wrist, p9); // Reference for normalization
+
+            // Fist Detection
+            const tipsToWrist = (dist(indexTip, wrist) + dist(middleTip, wrist) + dist(ringTip, wrist) + dist(pinkyTip, wrist)) / 4;
+            const isFist = (tipsToWrist / handSize) < 0.6; 
+
+            // Pinch Distance for Zooming
+            const pinchDist = dist(thumbTip, indexTip);
+            const normalizedPinch = pinchDist / handSize;
+
+            // Heart Gesture Detection: 
+            // Thumb & Index close (like pinch) but Middle, Ring, Pinky are curled (unlike zoom pinch where they might be loose)
+            // Stricter check for curled fingers
+            const areOthersClosed = (dist(middleTip, wrist) < handSize * 1.0) && 
+                                    (dist(ringTip, wrist) < handSize * 1.0) && 
+                                    (dist(pinkyTip, wrist) < handSize * 1.0);
+
+            let newGesture = 'OPEN';
+            let targetScale = 1;
+            let targetMorph = 0; // 0 = Circle, 1 = Heart
+
+            if (isFist) {
+                newGesture = 'FIST';
+                targetScale = 0;
+            } else if (normalizedPinch < 0.3) {
+                if (areOthersClosed) {
+                    newGesture = 'HEART';
+                    targetMorph = 1;
+                    targetScale = 1.2;
+                } else {
+                    newGesture = 'PINCH';
+                    // Zoom logic
+                    targetScale = Math.max(0.1, Math.min(normalizedPinch * 2.0, 2.5));
+                }
+            } else {
+                // Open Hand - default to full size
+                targetScale = 1;
+            }
+
+            state.gesture = newGesture;
+
+            // 3. Update Magic State
+            state.scale += (targetScale - state.scale) * 0.1;
+            state.heartMorph += (targetMorph - state.heartMorph) * 0.1;
+
+            // Spin logic
+            if (state.gesture === 'HEART') {
+                state.rotationAngle += CONFIG.magic.rotationSpeed * 0.5;
+                if (Math.random() > 0.8) emitParticles(state.palmPosition.x, state.palmPosition.y, 1);
+            } else if (state.gesture === 'PINCH') {
+                state.rotationAngle += CONFIG.magic.rotationSpeed * 4;
+            } else {
+                state.rotationAngle += CONFIG.magic.rotationSpeed;
+            }
+
+            // 4. Update Trail
+            state.trail.push({ x: state.palmPosition.x, y: state.palmPosition.y, life: 1.0 });
+            if (state.trail.length > CONFIG.magic.trailLength) state.trail.shift();
+
+            if (state.trail.length > 2) {
+                const last = state.trail[state.trail.length - 1];
+                const prev = state.trail[state.trail.length - 2];
+                const velocity = Math.sqrt(Math.pow(last.x - prev.x, 2) + Math.pow(last.y - prev.y, 2));
+                if (velocity > 15) emitParticles(state.palmPosition.x, state.palmPosition.y, 5);
+            }
+
+            // Draw Magic
+            if (state.scale > 0.01) {
+                drawMagicCircle(canvasCtx, state.palmPosition.x, state.palmPosition.y, state.scale, state.rotationAngle, state.heartMorph);
+            }
+        }
+
+        // --- Drawing Engine ---
+
+        function drawMorphShape(ctx, radius, morph, rotationOffset = 0) {
+            ctx.beginPath();
+            const steps = 100;
+            for (let i = 0; i <= steps; i++) {
+                const t = (i / steps) * Math.PI * 2 + rotationOffset;
+                
+                // Circle Point
+                const cx = radius * Math.cos(t);
+                const cy = radius * Math.sin(t);
+
+                // Heart Point
+                // Heart logic: x = 16sin^3(t), y = 13cos(t) - 5cos(2t) - 2cos(3t) - cos(4t)
+                // Scaled to match radius roughly
+                const hScale = radius / 16;
+                const hx = hScale * 16 * Math.pow(Math.sin(t), 3);
+                // Invert Y for canvas and shift up slightly to center
+                const hy = -hScale * (13 * Math.cos(t) - 5 * Math.cos(2*t) - 2 * Math.cos(3*t) - Math.cos(4*t)) - (radius * 0.1);
+
+                // Interpolate
+                const x = cx * (1 - morph) + hx * morph;
+                const y = cy * (1 - morph) + hy * morph;
+
+                if (i === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            }
+            ctx.closePath();
+        }
+
+        function drawMagicCircle(ctx, x, y, scale, rotation, morph) {
+            const baseR = CONFIG.magic.circleBaseRadius * scale;
+            if (baseR <= 0) return;
+
+            const colorMain = `rgb(${CONFIG.magic.baseColor})`;
+            const colorSec = `rgb(${CONFIG.magic.secondaryColor})`;
+
+            // If fully morphed to heart, change color to reddish pink
+            if (morph > 0.5) {
+                // Interpolate color toward Pink/Red
+                // Amber: 251, 191, 36. Pink: 236, 72, 153.
+                // We'll just hardcode a transition or keep it amber. 
+                // Let's keep it amber but maybe add a red tint?
+                // For simplicity, we keep the Doctor Strange Amber, but you could change it.
+            }
+
+            ctx.save();
+            ctx.translate(x, y);
+            
+            // If heart, we don't want it spinning wildly, so we dampen rotation or make it rock
+            // Current rotation is passed in.
+            if (morph > 0.8) {
+               // Make the heart "beat" or stay upright? 
+               // Dr Strange circles spin. Hearts usually don't spin 360 unless magic.
+               // We'll let it spin for the magic effect.
+               ctx.rotate(rotation);
+            } else {
+               ctx.rotate(rotation);
+            }
+
+            // Glow
+            ctx.shadowBlur = 20 + (morph * 20); // Extra glow for heart
+            ctx.shadowColor = colorMain;
+
+            // 1. Outer Main Shape (Circle -> Heart)
+            ctx.strokeStyle = colorMain;
+            ctx.lineWidth = 3;
+            drawMorphShape(ctx, baseR, morph);
+            ctx.stroke();
+
+            // 2. Secondary Shape (Square -> Inner Heart)
+            ctx.strokeStyle = colorSec;
+            ctx.lineWidth = 2;
+            
+            // Standard Square drawing doesn't morph easily to heart, 
+            // so we fade out the square and fade in a smaller heart
+            
+            if (morph < 0.5) {
+                // Draw Square (fading out)
+                ctx.globalAlpha = 1 - (morph * 2);
+                ctx.beginPath();
+                const sqSize = baseR * 0.7;
+                ctx.rect(-sqSize, -sqSize, sqSize * 2, sqSize * 2);
+                ctx.stroke();
+                
+                // Rotated Square
+                ctx.save();
+                ctx.rotate(Math.PI / 4);
+                ctx.beginPath();
+                ctx.rect(-sqSize, -sqSize, sqSize * 2, sqSize * 2);
+                ctx.stroke();
+                ctx.restore();
+                ctx.globalAlpha = 1;
+            } else {
+                // Draw Inner Heart (fading in)
+                ctx.globalAlpha = (morph - 0.5) * 2;
+                drawMorphShape(ctx, baseR * 0.6, 1); // Force heart shape
+                ctx.stroke();
+                ctx.globalAlpha = 1;
+            }
+
+            // 3. Inner Shape (Circle -> Tiny Heart)
+            ctx.beginPath();
+            drawMorphShape(ctx, baseR * 0.4, morph);
+            ctx.strokeStyle = colorMain;
+            ctx.lineWidth = 1;
+            ctx.stroke();
+
+            // 4. Center Core
+            ctx.fillStyle = `rgba(${CONFIG.magic.baseColor}, 0.5)`;
+            ctx.beginPath();
+            // Core also morphs
+            drawMorphShape(ctx, baseR * 0.15, morph);
+            ctx.fill();
+
+            // 5. Arc Segments / Decorative runes
+            // These usually look like circular text. We fade them out during heart transformation
+            if (morph < 0.8) {
+                ctx.globalAlpha = 1 - morph;
+                ctx.save();
+                ctx.rotate(-rotation * 2); 
+                ctx.beginPath();
+                ctx.arc(0, 0, baseR * 0.85, 0, Math.PI * 1.5);
+                ctx.strokeStyle = `rgba(${CONFIG.magic.secondaryColor}, 0.8)`;
+                ctx.lineWidth = 4;
+                ctx.stroke();
+                ctx.restore();
+                ctx.globalAlpha = 1;
+            }
+
+            ctx.restore();
+        }
+
+        function emitParticles(x, y, count) {
+            for (let i = 0; i < count; i++) {
+                state.particles.push({
+                    x: x + (Math.random() - 0.5) * 20,
+                    y: y + (Math.random() - 0.5) * 20,
+                    vx: (Math.random() - 0.5) * 5,
+                    vy: (Math.random() - 0.5) * 5,
+                    life: 1.0,
+                    size: Math.random() * 3 + 1
+                });
+            }
+        }
+
+        function updateAndDrawParticles(ctx) {
+            // Draw Trail
+            if (state.trail.length > 1) {
+                ctx.beginPath();
+                ctx.moveTo(state.trail[0].x, state.trail[0].y);
+                for (let i = 1; i < state.trail.length; i++) {
+                    const point = state.trail[i];
+                    // Quadratic bezier for smoothness could go here, but lineTo is faster
+                    ctx.lineTo(point.x, point.y);
+                }
+                ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
+                ctx.lineWidth = 4;
+                // Create gradient for trail
+                if (state.trail.length > 0) {
+                     const grad = ctx.createLinearGradient(
+                        state.trail[0].x, state.trail[0].y, 
+                        state.trail[state.trail.length-1].x, state.trail[state.trail.length-1].y
+                    );
+                    grad.addColorStop(0, `rgba(${CONFIG.magic.secondaryColor}, 0)`);
+                    grad.addColorStop(1, `rgba(${CONFIG.magic.baseColor}, 0.6)`);
+                    ctx.strokeStyle = grad;
+                    ctx.shadowBlur = 10;
+                    ctx.shadowColor = `rgb(${CONFIG.magic.baseColor})`;
+                    ctx.stroke();
+                }
+                ctx.shadowBlur = 0; // reset
+            }
+
+            // Decrease life of trail points
+            state.trail.forEach(p => p.life -= 0.05);
+            state.trail = state.trail.filter(p => p.life > 0);
+
+            // Update & Draw Sparks
+            for (let i = state.particles.length - 1; i >= 0; i--) {
+                const p = state.particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.life -= 0.02;
+
+                if (p.life <= 0) {
+                    state.particles.splice(i, 1);
+                    continue;
+                }
+
+                ctx.fillStyle = `rgba(${CONFIG.magic.baseColor}, ${p.life})`;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+
+    </script>
+</body>
+</html>
